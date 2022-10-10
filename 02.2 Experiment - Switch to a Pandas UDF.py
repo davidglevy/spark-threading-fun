@@ -137,30 +137,88 @@ display(result_string_df)
 
 # COMMAND ----------
 
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import as_completed
+
+# For local test, we'll create 40 threads.
+# When run in Spark, we'll reduce this to 10, as that will still be many threads with the executor as a
+# multiplier.
+n_threads = 40
+
+results
+
+def run_wait_wrapped(thread_id):
+    return (run_wait(thread_id), thread_id)
+
+
+with ThreadPoolExecutor(n_threads) as executor:
+    futures = [executor.submit(run_wait_wrapped, value) for value in values]
+
+    for future in as_completed(futures):
+                # get the downloaded url data
+                duration, thread_id = future.result()
+                print(f"Thread {thread_id} finised in {duration} seconds")
+    
+
+
+
+
+# COMMAND ----------
+
 # Lets test that we can operate on each element for one invocation.
-@pandas_udf('string', PandasUDFType.SCALAR)
-def pandas_string_op(v: Series) -> Series:
+@pandas_udf('int', PandasUDFType.SCALAR)
+def pandas_run_wait(v: Series) -> Series:
     # Ensure we have a "catch all".
     
     # Initialize a new ThreadPoolExecutor.
     # For IO Bound workloads, there can be many many more threads than cores, but for this we'll limit it to 10.
     
     # Get all the data passed to this function.
-    all_data = v.to_list()
+    thread_ids = v.to_list()
     
+    results_dict = {}
     
+    n_threads = 20
     
-    other_cells = ""
-    
-    temp = []
-    for element in all_data:
-        if (other_cells != ""):
-            other_cells = other_cells + " "
-        other_cells = other_cells + element
-        temp.append(element + "_mutated")
+    with ThreadPoolExecutor(n_threads) as executor:
+        futures = [executor.submit(run_wait_wrapped, thread_id) for thread_id in thread_ids]
 
+        for future in as_completed(futures):
+                    # get the downloaded url data
+                    duration, thread_id = future.result()
+                    results_dict[thread_id] = duration
     results = []
-    for t in temp:
-        results.append(t + " " + other_cells)
+    for thread_id in thread_ids:
+        results.append(results_dict[thread_id])
     
     return pd.Series(results)
+
+# COMMAND ----------
+
+#pd_thread_ids = pd.Series(['a', 'b', 'c'])
+#pandas_run_wait(pd_thread_ids)
+
+# COMMAND ----------
+
+from pyspark.sql.functions import udf, max,col
+from pyspark.sql.types import IntegerType
+
+values = []
+for x in range(1,1000):
+    values.append({'thread_id': x})
+    
+df = spark.createDataFrame(values, "thread_id int")
+
+# COMMAND ----------
+
+
+result_df = df.repartition(16).withColumn('duration', pandas_run_wait(col("thread_id")))
+
+# COMMAND ----------
+
+display(result_df)
+
+# COMMAND ----------
+
+df_results = df.withColumn("run_time", run_wait_udf("thread_id"))
+display(df_results)
