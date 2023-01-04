@@ -23,13 +23,15 @@
 # COMMAND ----------
 
 from pyspark.sql.functions import pandas_udf, PandasUDFType
+from pyspark.sql.types import IntegerType, StringType
 import pandas as pd
 from pandas import Series
 
 # Use pandas_udf to define a Pandas UDF
-#@pandas_udf()
+# @pandas_udf()
 # Input/output are both a pandas.Series of doubles
 
+@pandas_udf(IntegerType())
 def pandas_plus_one(v: Series) -> Series:
     return v + 1
 
@@ -53,16 +55,12 @@ display(result_df)
 
 # COMMAND ----------
 
-
-
-# COMMAND ----------
-
 from pyspark.sql.functions import pandas_udf, PandasUDFType
 
 
 
 # Lets test that we can operate on each element for one invocation.
-@pandas_udf('string', PandasUDFType.SCALAR)
+@pandas_udf(StringType())
 def pandas_string_op(v: Series) -> Series:
     all_data = v.to_list()
     
@@ -145,10 +143,8 @@ from concurrent.futures import as_completed
 # multiplier.
 n_threads = 40
 
-results
-
-def run_wait_wrapped(thread_id):
-    return (run_wait(thread_id), thread_id)
+def run_wait_wrapped(row_id):
+    return (run_wait(row_id), row_id)
 
 
 with ThreadPoolExecutor(n_threads) as executor:
@@ -156,8 +152,8 @@ with ThreadPoolExecutor(n_threads) as executor:
 
     for future in as_completed(futures):
                 # get the downloaded url data
-                duration, thread_id = future.result()
-                print(f"Thread {thread_id} finised in {duration} seconds")
+                duration, data = future.result()
+                print(f"Row {data['row_id']} finished in {duration} seconds")
     
 
 
@@ -166,37 +162,34 @@ with ThreadPoolExecutor(n_threads) as executor:
 # COMMAND ----------
 
 # Lets test that we can operate on each element for one invocation.
-@pandas_udf('int', PandasUDFType.SCALAR)
+@pandas_udf(IntegerType())
 def pandas_run_wait(v: Series) -> Series:
-    # Ensure we have a "catch all".
-    
+
     # Initialize a new ThreadPoolExecutor.
     # For IO Bound workloads, there can be many many more threads than cores, but for this we'll limit it to 10.
     
     # Get all the data passed to this function.
-    thread_ids = v.to_list()
+    # Order here is important to ensure they are passed back correctly.
+    row_ids = v.to_list()
     
     results_dict = {}
-    
-    n_threads = 20
-    
+    n_threads = 100
+
     with ThreadPoolExecutor(n_threads) as executor:
-        futures = [executor.submit(run_wait_wrapped, thread_id) for thread_id in thread_ids]
+        futures = [executor.submit(run_wait_wrapped, row_id) for row_id in row_ids]
 
         for future in as_completed(futures):
                     # get the downloaded url data
-                    duration, thread_id = future.result()
-                    results_dict[thread_id] = duration
+                    duration, row_id = future.result()
+
+                    # Use a map for efficient lookup later.
+                    results_dict[str(row_id)] = duration
     results = []
-    for thread_id in thread_ids:
-        results.append(results_dict[thread_id])
+    for row_id in row_ids:
+        results.append(results_dict[str(row_id)])
     
     return pd.Series(results)
 
-# COMMAND ----------
-
-#pd_thread_ids = pd.Series(['a', 'b', 'c'])
-#pandas_run_wait(pd_thread_ids)
 
 # COMMAND ----------
 
@@ -204,21 +197,35 @@ from pyspark.sql.functions import udf, max,col
 from pyspark.sql.types import IntegerType
 
 values = []
-for x in range(1,1000):
-    values.append({'thread_id': x})
+for x in range(1,201):
+    values.append({'row_id': x})
     
-df = spark.createDataFrame(values, "thread_id int")
+df = spark.createDataFrame(values, "row_id int")
 
 # COMMAND ----------
 
+import time
 
-result_df = df.repartition(16).withColumn('duration', pandas_run_wait(col("thread_id")))
-
-# COMMAND ----------
+st = time.time()
+result_df = df.repartition(8).withColumn('duration', pandas_run_wait(col("row_id")))
 
 display(result_df)
+et = time.time()
+# get the execution time
+elapsed_time_threaded = et - st
+print('Time to run with threading:', elapsed_time_threaded, 'seconds')
 
 # COMMAND ----------
 
-df_results = df.withColumn("run_time", run_wait_udf("thread_id"))
+st = time.time()
+df_results = df.withColumn("run_time", run_wait_udf("row_id"))
 display(df_results)
+et = time.time()
+# get the execution time
+elapsed_time_normal = et - st
+print('Time to run without threading:', elapsed_time_normal, 'seconds')
+
+# COMMAND ----------
+
+percent_reduction = round(elapsed_time_threaded / elapsed_time_normal * 100, 2)
+print(f"Comparative Runtime: {percent_reduction}%")

@@ -74,7 +74,7 @@ def run_threads(thread_names):
     
     logging.info("All threads started")
     
-    f
+    
 
 # COMMAND ----------
 

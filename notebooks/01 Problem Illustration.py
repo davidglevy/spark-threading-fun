@@ -9,16 +9,18 @@ import random
 import logging
 import threading
 
-def run_wait(thread_id):
-    random.seed()
+random.seed()
+
+
+def run_wait(row_id):
     
     start = time.time()
     
-    print(f"Starting thread [{thread_id}] wait with slight variation")
+    print(f"Starting row [{row_id}] wait with slight variation")
     
     time.sleep(3 + random.randint(0,2))
     
-    print(f"Ending thread [{thread_id}] wait with slight variation")
+    print(f"Ending row [{row_id}] wait with slight variation")
 
     end = time.time()
 
@@ -28,7 +30,7 @@ runTests = dbutils.widgets.get("runTests")
 
 if (runTests == "Yes"):
     print("Running single test")
-    run_wait(1)
+    print("Duration was: " + str(run_wait(1)))
 
 # COMMAND ----------
 
@@ -37,9 +39,9 @@ from pyspark.sql.types import IntegerType
 
 values = []
 for x in range(1,100):
-    values.append({'thread_id': x})
+    values.append({'row_id': x})
     
-df = spark.createDataFrame(values, "thread_id int")
+df = spark.createDataFrame(values, "row_id int")
 
 run_wait_udf = udf(run_wait, IntegerType())
 
@@ -48,7 +50,7 @@ run_wait_udf = udf(run_wait, IntegerType())
 def runUdfWithWait():
     start = time.time()
 
-    df_results = df.withColumn("run_time", run_wait_udf("thread_id")).agg(max(col("run_time")).alias('longest_time'))
+    df_results = df.withColumn("run_time", run_wait_udf("row_id")).agg(max(col("run_time")).alias('longest_time'))
 
     results = df_results.collect()
     end = time.time()
